@@ -1,0 +1,54 @@
+name: Auto Deploy on New n8n Release
+
+on:
+  # Check once per week (every Sunday at midnight UTC)
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 09:00 UTC
+  # Allow manual triggering
+  workflow_dispatch:
+
+jobs:
+  check-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Get latest n8n release
+      id: get-release
+      run: |
+        LATEST_RELEASE=$(curl -s https://api.github.com/repos/n8n-io/n8n/releases/latest | jq -r '.tag_name')
+        echo "latest_release=$LATEST_RELEASE" >> $GITHUB_OUTPUT
+        echo "Latest n8n release: $LATEST_RELEASE"
+        
+    - name: Check if deployment needed
+      id: check-deploy
+      run: |
+        LATEST_RELEASE=${{ steps.get-release.outputs.latest_release }}
+        
+        if [ ! -f .last-deployed-release ]; then
+          echo "should_deploy=true" >> $GITHUB_OUTPUT
+        else
+          LAST_DEPLOYED=$(cat .last-deployed-release)
+          if [ "$LATEST_RELEASE" != "$LAST_DEPLOYED" ]; then
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+          fi
+        fi
+        
+    - name: Trigger Heroku deployment
+      if: steps.check-deploy.outputs.should_deploy == 'true'
+      run: |
+        LATEST_RELEASE=${{ steps.get-release.outputs.latest_release }}
+        
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        echo $LATEST_RELEASE > .last-deployed-release
+        git add .last-deployed-release
+        git commit -m "Auto-deploy: Update to n8n $LATEST_RELEASE"
+        git push
